@@ -8,6 +8,7 @@ private class DedupeReminderTest {
      c.Subject   = 'Dedupe this account';
      c.OwnerId   = '005f2000008sVgi';
      c.AccountId =  acc.id;
+     c.description = 'test';
      insert c;
     }
 }
