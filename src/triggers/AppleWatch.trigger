@@ -5,6 +5,8 @@ trigger AppleWatch on Opportunity (after insert) {
         t.description = 'Send them one ASAP';
         t.priority    = 'High';
         t.WhatId      = opp.id;
+        t.Status      = 'In Progess';
+        
         insert t;
     }
 
