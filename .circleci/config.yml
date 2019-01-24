@@ -1,40 +1,60 @@
 version: 2
 jobs:
-  one:
+  build:
     docker:
-      - image: circleci/ruby:2.4.1
-    steps:
+      - image: circleci/node:latest
+      steps:
       - checkout
-      - run: echo "A first hello"
-      - run: mkdir -p my_workspace
-      - run: echo "Trying out workspaces" > my_workspace/echo-output
-      - persist_to_workspace:
-          # Must be an absolute path, or relative path from working_directory
-          root: my_workspace
-          # Must be relative path from root
+      - restore_cache:
+          keys:
+              - sfdx-version-41-local
+                - run:
+          name: Install Salesforce DX
+          command: |
+              openssl aes-256-cbc -k $KEY -in assets/server.key.enc -out assets/server.key -d
+              export SFDX_AUTOUPDATE_DISABLE=true
+              export SFDX_USE_GENERIC_UNIX_KEYCHAIN=true
+              export SFDX_DOMAIN_RETRY=300
+              npm install sfdx-cli
+              node_modules/sfdx-cli/bin/run --version
+              node_modules/sfdx-cli/bin/run plugins --core
+      - save_cache:
+          key: sfdx-version-41-local
           paths:
-            - echo-output      
-  two:
-    docker:
-      - image: circleci/ruby:2.4.1
-    steps:
-      - checkout
-      - run: echo "A more familiar hi"  
-      - attach_workspace:
-          # Must be absolute path or relative path from working_directory
-          at: my_workspace
+              - node_modules
+ - run:
+          name: Create Scratch Org
+          command: |
+              node_modules/sfdx-cli/bin/run force:auth:jwt:grant --clientid 3MVG9zlTNB8o8BA0ROar2FuMMwggeszaBVJseUZv3CuHVziE7lwGEbSbncgR53p2xo8z4.yZhOgFJE7CgGJP8
+ --jwtkeyfile assets/server.key --username sumir.saini@sfdxpbo.com --setdefaultdevhubusername -a DevHub
+              node_modules/sfdx-cli/bin/run force:org:create -v DevHub -s -f config/project-scratch-def.json -a scratch
+ - run:
+          name: Remove Server Key
+          when: always
+          command: |
+              rm assets/server.key
+      - run:
+          name: Push Source
+          command: |
+             node_modules/sfdx-cli/bin/run force:source:push -u scratch
+      - run:
+          name: Run Apex Tests
+          command: |
+              mkdir ~/apex_tests
+              node_modules/sfdx-cli/bin/run force:apex:test:run -u scratch -c -r human -d ~/apex_tests              
 
-      - run: |
-          if [[ $(cat my_workspace/echo-output) == "Trying out workspaces" ]]; then
-            echo "It worked!";
-          else
-            echo "Nope!"; exit 1
-          fi
-workflows:
-  version: 2
-  one_and_two:
-    jobs:
-      - one
-      - two:
-          requires:
-            - one
+      - run:
+          name: Push to Codecov.io
+          command: |
+              cp ~/apex_tests/test-result-codecoverage.json .
+              bash <(curl -s https://codecov.io/bash)
+      - run:
+          name: Clean Up
+          when: always
+          command: |
+              node_modules/sfdx-cli/bin/run force:org:delete -u scratch -p
+              rm ~/apex_tests/*.txt ~/apex_tests/test-result-7*.json
+                    - store_artifacts:
+          path: ~/apex_tests
+      - store_test_results:
+          path: ~/apex_tests
