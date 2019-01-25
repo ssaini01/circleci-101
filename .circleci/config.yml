@@ -1,60 +1,48 @@
-version: 2
-jobs:
-  build:
-    docker:
-      - image: circleci/node:latest
-      steps:
-      - checkout
-      - restore_cache:
-          keys:
-              - sfdx-version-41-local
-                - run:
-          name: Install Salesforce DX
-          command: |
-              openssl aes-256-cbc -k $KEY -in assets/server.key.enc -out assets/server.key -d
-              export SFDX_AUTOUPDATE_DISABLE=true
-              export SFDX_USE_GENERIC_UNIX_KEYCHAIN=true
-              export SFDX_DOMAIN_RETRY=300
-              npm install sfdx-cli
-              node_modules/sfdx-cli/bin/run --version
-              node_modules/sfdx-cli/bin/run plugins --core
-      - save_cache:
-          key: sfdx-version-41-local
-          paths:
-              - node_modules
- - run:
-          name: Create Scratch Org
-          command: |
-              node_modules/sfdx-cli/bin/run force:auth:jwt:grant --clientid 3MVG9zlTNB8o8BA0ROar2FuMMwggeszaBVJseUZv3CuHVziE7lwGEbSbncgR53p2xo8z4.yZhOgFJE7CgGJP8
- --jwtkeyfile assets/server.key --username sumir.saini@sfdxpbo.com --setdefaultdevhubusername -a DevHub
-              node_modules/sfdx-cli/bin/run force:org:create -v DevHub -s -f config/project-scratch-def.json -a scratch
- - run:
-          name: Remove Server Key
-          when: always
-          command: |
-              rm assets/server.key
-      - run:
-          name: Push Source
-          command: |
-             node_modules/sfdx-cli/bin/run force:source:push -u scratch
-      - run:
-          name: Run Apex Tests
-          command: |
-              mkdir ~/apex_tests
-              node_modules/sfdx-cli/bin/run force:apex:test:run -u scratch -c -r human -d ~/apex_tests              
 
-      - run:
-          name: Push to Codecov.io
-          command: |
-              cp ~/apex_tests/test-result-codecoverage.json .
-              bash <(curl -s https://codecov.io/bash)
-      - run:
-          name: Clean Up
-          when: always
-          command: |
-              node_modules/sfdx-cli/bin/run force:org:delete -u scratch -p
-              rm ~/apex_tests/*.txt ~/apex_tests/test-result-7*.json
-                    - store_artifacts:
-          path: ~/apex_tests
-      - store_test_results:
-          path: ~/apex_tests
+general:
+# Uncomment the following to specify only a specific branch
+#   branches:
+#     only:
+#       - dev # specific branch
+#       - /dev-.*/ # or regexes
+
+machine:
+  timezone: America/New_York
+  environment:
+    # from https://developer.salesforce.com/docs/atlas.en-us.sfdx_setup.meta/sfdx_setup/sfdx_setup_install_cli_standalone.htm
+    # and https://developer.salesforce.com/media/salesforce-cli/manifest.json
+    DX_CLI_URL: https://developer.salesforce.com/media/salesforce-cli/sfdx-v5.7.6-d42cf65-linux-amd64.tar.xz
+    SFDX_DISABLE_ENCRYPTION: true
+
+dependencies:
+  override:
+    - wget -qO- $DX_CLI_URL | tar xJf -
+    - ./sfdx/install
+    - mkdir tmp
+    - echo 'make hub key'
+    - echo $HUB_SERVER_KEY_HEX | xxd -r -ps >> keys/hub.key
+    - openssl rsa -in keys/hub.key -check -noout
+    - sfdx force:auth:jwt:grant --clientid $HUB_CONSUMER_KEY --jwtkeyfile keys/hub.key --username $HUB_SFDC_USER --setdefaultdevhubusername -a hub
+    ### Uncomment the following if performing deployments
+    #- echo 'make deploy key'
+    #- echo $DEPLOY_SERVER_KEY_HEX | xxd -r -ps >> keys/deploy.key
+    #- openssl rsa -in keys/deploy.key -check -noout
+    #- sfdx force:auth:jwt:grant --clientid $DEPLOY_CONSUMER_KEY --jwtkeyfile keys/deploy.key --username $DEPLOY_SFDC_USER -a deploy
+
+
+test:
+  override:
+    - sfdx force --help
+    - sfdx force:org:create -s -f config/project-scratch-def.json -a circle_build_$CIRCLE_BUILD_NUM
+    - sfdx force:source:push -u circle_build_$CIRCLE_BUILD_NUM
+    - mkdir -p $CIRCLE_TEST_REPORTS/junit
+    - sfdx force:apex:test:run -c -d $CIRCLE_TEST_REPORTS/junit -r junit
+  post:
+    - sfdx force:org:delete -u circle_build_$CIRCLE_BUILD_NUM -p
+
+### Uncomment the following if performing deployments
+#deployment:
+#  override:
+#    - sfdx force:source:convert -r force-app -d testDeploy
+#    - . cleanupDeploy.sh
+#    - sfdx force:mdapi:deploy -d testDeploy/ -u deploy -w 2
